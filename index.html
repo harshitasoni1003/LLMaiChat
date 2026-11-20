@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Chat Studio — Adarsh Haldkar</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #1e293b;
+      --border: #334155;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --user-msg: #2563eb;
+      --ai-msg: #1e293b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+    body { background: var(--bg); color: var(--text); display: flex; height: 100vh; overflow: hidden; }
+    .sidebar {
+      width: 310px; background: var(--panel); border-right: 1px solid var(--border);
+      padding: 20px; display: flex; flex-direction: column; gap: 14px; overflow-y: auto;
+    }
+    .sidebar h2 { font-size: 1.15rem; color: var(--accent); }
+    .sidebar p.sub { font-size: 0.8rem; color: var(--muted); }
+    label { font-size: 0.8rem; color: var(--muted); display: block; margin-bottom: 4px; }
+    input, textarea, select {
+      width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text);
+      padding: 8px 10px; border-radius: 6px; font-size: 0.85rem;
+    }
+    textarea { resize: vertical; min-height: 75px; }
+    .stats-box {
+      background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+      padding: 12px; font-size: 0.8rem; line-height: 1.6;
+    }
+    .stats-box span { color: var(--accent); font-weight: 600; }
+    button {
+      background: var(--accent); color: #0f172a; font-weight: 600; border: none;
+      padding: 9px 14px; border-radius: 6px; cursor: pointer; font-size: 0.85rem;
+    }
+    button.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+    button:hover { opacity: 0.9; }
+    .main { flex: 1; display: flex; flex-direction: column; }
+    .header {
+      padding: 14px 20px; border-bottom: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .chat-box { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+    .msg { max-width: 78%; padding: 12px 15px; border-radius: 12px; font-size: 0.92rem; line-height: 1.5; white-space: pre-wrap; }
+    .msg.user { align-self: flex-end; background: var(--user-msg); color: #fff; border-bottom-right-radius: 2px; }
+    .msg.ai { align-self: flex-start; background: var(--ai-msg); border: 1px solid var(--border); border-bottom-left-radius: 2px; }
+    .msg.error { align-self: center; background: #7f1d1d; border: 1px solid #ef4444; font-size: 0.85rem; }
+    .input-bar {
+      padding: 14px 20px; border-top: 1px solid var(--border); display: flex; gap: 10px; background: var(--panel);
+    }
+    .input-bar input { flex: 1; }
+    @media (max-width: 768px) {
+      body { flex-direction: column; }
+      .sidebar { width: 100%; max-height: 42vh; border-right: none; border-bottom: 1px solid var(--border); }
+    }
+  </style>
+</head>
+<body>
+  <aside class="sidebar">
+    <div>
+      <h2>AI Chat Studio</h2>
+      <p class="sub">Built by Adarsh Haldkar | B.Tech AIML</p>
+    </div>
+
+    <div>
+      <label for="apiKey">Gemini API Key (Stored locally in browser)</label>
+      <input type="password" id="apiKey" placeholder="AIzaSy..." />
+    </div>
+
+    <div>
+      <label for="modelSelect">Model</label>
+      <select id="modelSelect">
+        <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (Fast & Low Cost)</option>
+        <option value="gemini-2.5-flash">gemini-2.5-flash (Balanced)</option>
+      </select>
+    </div>
+
+    <div>
+      <label for="sysPrompt">Custom Instructions (System Role)</label>
+      <textarea id="sysPrompt">You are a helpful, concise AI assistant. Format technical explanations clearly.</textarea>
+    </div>
+
+    <div>
+      <label for="tempRange">Temperature: <span id="tempVal">0.5</span></label>
+      <input type="range" id="tempRange" min="0" max="1.5" step="0.1" value="0.5"
+        oninput="document.getElementById('tempVal').textContent = this.value" />
+    </div>
+
+    <div class="stats-box">
+      <div>History Window: <span id="histCount">0</span> / 10 msgs</div>
+      <div>Total Tokens Used: <span id="tokenCount">0</span></div>
+      <div>Est. Session Cost: <span id="costCount">$0.000000</span></div>
+    </div>
+
+    <button class="secondary" onclick="clearChat()">Clear Conversation</button>
+  </aside>
+
+  <main class="main">
+    <div class="header">
+      <strong>Multi-Turn LLM Chat Application</strong>
+      <span style="font-size:0.8rem;color:var(--muted);">Context Trimming + Token & Cost Telemetry</span>
+    </div>
+
+    <div class="chat-box" id="chatBox">
+      <div class="msg ai">Hello! Enter your Gemini API key in the left panel, customize your system instructions, and start chatting.</div>
+    </div>
+
+    <form class="input-bar" onsubmit="sendMessage(event)">
+      <input type="text" id="userInput" placeholder="Ask anything..." required />
+      <button type="submit" id="sendBtn">Send</button>
+    </form>
+  </main>
+
+  <script>
+    let chatHistory = [];
+    let totalTokens = 0;
+    let totalCost = 0;
+    const MAX_HISTORY = 10;
+
+    const savedKey = localStorage.getItem('gemini_api_key');
+    if (savedKey) document.getElementById('apiKey').value = savedKey;
+
+    function appendMessage(text, cls) {
+      const box = document.getElementById('chatBox');
+      const div = document.createElement('div');
+      div.className = 'msg ' + cls;
+      div.textContent = text;
+      box.appendChild(div);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function updateTelemetry() {
+      document.getElementById('histCount').textContent = chatHistory.length;
+      document.getElementById('tokenCount').textContent = totalTokens;
+      document.getElementById('costCount').textContent = '$' + totalCost.toFixed(6);
+    }
+
+    function clearChat() {
+      chatHistory = [];
+      totalTokens = 0;
+      totalCost = 0;
+      document.getElementById('chatBox').innerHTML = '<div class="msg ai">Conversation history cleared.</div>';
+      updateTelemetry();
+    }
+
+    async function sendMessage(e) {
+      e.preventDefault();
+      const apiKey = document.getElementById('apiKey').value.trim();
+      const inputEl = document.getElementById('userInput');
+      const sendBtn = document.getElementById('sendBtn');
+      const userText = inputEl.value.trim();
+      if (!userText) return;
+
+      if (!apiKey) {
+        appendMessage('Please enter your Gemini API Key in the sidebar first.', 'error');
+        return;
+      }
+      localStorage.setItem('gemini_api_key', apiKey);
+
+      appendMessage(userText, 'user');
+      inputEl.value = '';
+      sendBtn.disabled = true;
+
+      chatHistory.push({ role: 'user', parts: [{ text: userText }] });
+      if (chatHistory.length > MAX_HISTORY) {
+        chatHistory = chatHistory.slice(-MAX_HISTORY);
+      }
+
+      const model = document.getElementById('modelSelect').value;
+      const sysInstruction = document.getElementById('sysPrompt').value.trim();
+      const temperature = parseFloat(document.getElementById('tempRange').value);
+
+      try {
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              systemInstruction: sysInstruction ? { parts: [{ text: sysInstruction }] } : undefined,
+              contents: chatHistory,
+              generationConfig: { temperature: temperature, maxOutputTokens: 600 }
+            })
+          }
+        );
+
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error?.message || 'API Request Failed');
+        }
+
+        const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || '(No response)';
+        chatHistory.push({ role: 'model', parts: [{ text: aiText }] });
+        appendMessage(aiText, 'ai');
+
+        if (data.usageMetadata) {
+          const inTok = data.usageMetadata.promptTokenCount || 0;
+          const outTok = data.usageMetadata.candidatesTokenCount || 0;
+          totalTokens += inTok + outTok;
+          totalCost += (inTok / 1_000_000) * 0.075 + (outTok / 1_000_000) * 0.30;
+        }
+        updateTelemetry();
+      } catch (err) {
+        chatHistory.pop();
+        appendMessage('Error: ' + err.message, 'error');
+      } finally {
+        sendBtn.disabled = false;
+      }
+    }
+  </script>
+</body>
+</html>
